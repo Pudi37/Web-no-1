@@ -269,7 +269,9 @@ function startDay(){
 /* trạng thái hiển thị: done (✓ xanh), fail (✗ đỏ), keep (đang giữ, cam), todo (chưa đạt) */
 function mState(m){
   const d=G.ds;
-  if(m.kind==='goal'){if(d.done[m.id])return 'done';return m.fail&&m.fail(d,G)?'fail':'todo'}
+  if(d.done[m.id])return 'done';
+  if(d.lost&&d.lost[m.id])return 'fail';
+  if(m.kind==='goal')return m.fail&&m.fail(d,G)?'fail':'todo';
   if(m.fail&&m.fail(d,G))return 'fail';
   return (m.hold?m.hold(d,G):true)?'keep':'todo';
 }
@@ -827,7 +829,7 @@ function workScene(pm){
       // thanh thời gian
       rect(0,58,W,6,'#0a121a');rect(0,58,W*(1-s.t/s.tl),6,s.t>s.tl-10?C.coral:C.teal);
       text((pm?'Làm việc buổi chiều':'Làm việc buổi sáng')+'  ·  Đã giao '+s.got+'  ·  Mang '+s.carry+'/3  ·  '+Math.max(0,Math.ceil(s.tl-s.t))+'s',480,76,13,C.txt,'center',800);
-      if(s.call){rr(380,88,200,22,11,'rgba(10,18,26,.88)',C.amber);text('📞 Sếp gọi: vào phòng Sếp, còn '+Math.max(0,Math.ceil(s.call.left))+'s',480,99,12,C.amber,'center',800)}
+      if(s.call){rr(350,122,260,22,11,'rgba(10,18,26,.88)',C.amber);text('📞 Sếp gọi: vào phòng Sếp, còn '+Math.max(0,Math.ceil(s.call.left))+'s',480,133,12,C.amber,'center',800)}
       hud();strip('Mũi tên/WASD: di chuyển  ·  nhặt tài liệu rồi mang tới phòng Sếp  ·  P: tạm dừng');
       if(s.paused){rect(0,58,W,432,'rgba(10,18,26,.75)');text('TẠM DỪNG',480,260,36,C.txt,'center',800);text('Nhấn P để tiếp tục',480,300,14,C.dim,'center')}
       if(s.done){
@@ -1019,8 +1021,8 @@ S.out=(()=>{let s;return{
     let done=0,mx=0;
     G.missions.forEach(id=>{
       const m=missionObj(id),ok=mPass(m);
-      if(ok){done++;const got=addXP(missionBase());mx+=got;addScore(100);lines.push(['✓ '+m.t,'+'+got+' XP',C.green])}
-      else lines.push(['✗ '+m.t,'—',C.dim]);
+      if(ok){done++;G.ds.done[id]=true;const got=addXP(missionBase());mx+=got;addScore(100);lines.push(['✓ '+m.t,'+'+got+' XP',C.green])}
+      else{G.ds.lost=G.ds.lost||{};G.ds.lost[id]=true;lines.push(['✗ '+m.t,'—',C.dim])}
     });
     if(done===3){
       // thưởng 50% tổng XP nhiệm vụ thực nhận, cộng thẳng (không nhân hệ số XP lần nữa)
