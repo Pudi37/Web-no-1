@@ -345,31 +345,72 @@ const isOK=c=>c==='Enter'||c==='NumpadEnter';
 const S={};
 
 // --- Tiêu đề
-S.title=(()=>{let t=0;
+S.title=(()=>{
+ /* Phối màu tương phản: xanh chàm đêm (nền) đối lập cam hoàng hôn (điểm nhấn) */
+ const TC={sky1:'#0b1230',sky2:'#26256b',glow:'#ff8a3d',sun1:'#ffb36b',sun2:'#ff5d73',far:'#1e2a66',near:'#0b1030',win:'#ffb36b',ink:'#fff4e8',dim:'#a9b4e8'};
+ let t=0,sel=0,bl;
+ const rnd=(()=>{let x=7;return()=>(x=(x*16807)%2147483647)/2147483647})();
+ const mk=(n,hmin,hmax,wmin,wmax)=>{const a=[];let x=-10;while(x<W){const w=wmin+rnd()*(wmax-wmin);a.push({x,w,h:hmin+rnd()*(hmax-hmin)});x+=w+2+rnd()*4}return a};
+ const items=()=>[
+   {t:'Bắt đầu mới',on:true,go:()=>go('setup')},
+   {t:SAVED?'Chơi tiếp  ·  '+SAVED.p.name+'  ·  Ngày '+SAVED.day:'Chơi tiếp  ·  chưa có bản lưu',on:!!SAVED,go:()=>{G=JSON.parse(JSON.stringify(SAVED));startDay();go('brief')}},
+   {t:'Bảng xếp hạng',on:true,go:()=>go('rank')},
+ ];
+ function skyline(list,col,base,lit,seed){
+   list.forEach((b,i)=>{
+     ctx.fillStyle=col;ctx.fillRect(b.x,base-b.h,b.w,b.h);
+     if(!lit)return;
+     for(let y=base-b.h+10;y<base-8;y+=13)for(let x=b.x+6;x<b.x+b.w-8;x+=11)
+       if(((x*7+y*3+i*5+seed+Math.floor(t*.6))%7)<3){ctx.fillStyle=TC.win;ctx.globalAlpha=.85;ctx.fillRect(x,y,4,6);ctx.globalAlpha=1}
+   });
+ }
  return{
-  enter(){t=0},
+  enter(){t=0;sel=0;if(!bl)bl={far:mk(0,70,170,36,70),near:mk(0,40,120,44,90)}},
   update(dt){t+=dt},
   key(c){
-    if(isOK(c)||c==='Space'){sfx.ok();go('setup')}
-    if(c==='KeyC'&&SAVED){G=JSON.parse(JSON.stringify(SAVED));sfx.ok();startDay();go('brief')}
-    if(c==='KeyL'){sfx.ok();go('rank')}
+    const it=items();
+    if(isUp(c)){do{sel=(sel+2)%3}while(!it[sel].on);sfx.step()}
+    else if(isDn(c)){do{sel=(sel+1)%3}while(!it[sel].on);sfx.step()}
+    else if(isOK(c)||c==='Space'){if(it[sel].on){sfx.ok();it[sel].go()}}
+    else if(c==='KeyC'&&it[1].on){sfx.ok();it[1].go()}
+    else if(c==='KeyL'){sfx.ok();it[2].go()}
   },
   draw(){
-    const g=ctx.createLinearGradient(0,0,0,H);g.addColorStop(0,'#0d1b2b');g.addColorStop(1,'#1e3550');ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
-    for(let i=0;i<60;i++){const x=(i*173)%W,y=(i*97)%260;rect(x,y,2,2,'rgba(255,255,255,'+(.3+.3*Math.sin(T*2+i))+')')}
-    const bl=[[40,200,70],[120,260,60],[190,170,80],[280,300,70],[620,280,70],[700,190,80],[790,250,60],[860,210,80]];
-    bl.forEach((b,i)=>{rect(b[0],H-b[1]-20,b[2],b[1],'#12202f');for(let y=0;y<b[1]-14;y+=16)for(let x=8;x<b[2]-10;x+=16)if((x*7+y*3+i*5+Math.floor(T*.7))%5>1)rect(b[0]+x,H-b[1]-12+y,6,8,'#f4d58d')});
-    rect(360,H-380-20,240,380,'#18304a');rect(360,H-400,240,10,'#2ec4b6');
-    for(let y=0;y<350;y+=20)for(let x=14;x<226;x+=22)rect(360+x,H-370+y,10,12,((x+y*2)%3===0)?'#f4d58d':'#27496b');
-    rect(0,H-20,W,20,'#0b141c');
-    ctx.fillStyle='#2ec4b6';ctx.beginPath();ctx.arc(480,H-430,26,0,7);ctx.fill();ctx.strokeStyle='#0d1b2b';ctx.lineWidth=2;ctx.beginPath();ctx.ellipse(480,H-430,11,26,0,0,7);ctx.moveTo(454,H-430);ctx.lineTo(506,H-430);ctx.stroke();
-    text('VẠN QUỐC',480,100,64,C.txt,'center',800);
-    text('TẬP ĐOÀN ĐA QUỐC GIA',480,150,16,C.teal,'center',800);
-    text('Từ thực tập sinh đến Tổng giám đốc',480,180,15,C.dim,'center',600);
-    if(blink(T)){text('Nhấn Enter để bắt đầu',480,236,18,C.amber,'center',800)}
-    if(SAVED)text('Nhấn C để chơi tiếp  ·  '+SAVED.p.name+'  ·  Ngày '+SAVED.day+'  ·  '+RANKS[SAVED.rank].n,480,266,13,C.green,'center',600);
-    text('Nhấn L để xem bảng xếp hạng',480,290,13,C.dim,'center',600);
-    text(CLOUD.db?'☁ Tiến trình được lưu trên tài khoản của bạn, mở lại ở đâu cũng chơi tiếp được':'Tiến trình được lưu trong trình duyệt này',480,H-30,12,CLOUD.db?C.teal:C.dim,'center',600);
+    const base=H-26;
+    // bầu trời
+    const g=ctx.createLinearGradient(0,0,0,base);g.addColorStop(0,TC.sky1);g.addColorStop(.55,TC.sky2);g.addColorStop(1,'#c4476b');ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+    for(let i=0;i<70;i++){const x=(i*173)%W,y=(i*97)%250;ctx.globalAlpha=.25+.35*Math.sin(t*1.6+i);rect(x,y,2,2,'#fff');ctx.globalAlpha=1}
+    // mặt trời / quả địa cầu cam ở chân trời
+    const cx=480,cy=base-96,r=110;
+    const gl=ctx.createRadialGradient(cx,cy,r*.6,cx,cy,r*2.3);gl.addColorStop(0,'rgba(255,138,61,.55)');gl.addColorStop(1,'rgba(255,138,61,0)');ctx.fillStyle=gl;ctx.fillRect(0,0,W,H);
+    const sg=ctx.createLinearGradient(0,cy-r,0,cy+r);sg.addColorStop(0,TC.sun1);sg.addColorStop(1,TC.sun2);ctx.fillStyle=sg;ctx.beginPath();ctx.arc(cx,cy,r,0,7);ctx.fill();
+    ctx.strokeStyle='rgba(11,18,48,.35)';ctx.lineWidth=2;ctx.beginPath();ctx.ellipse(cx,cy,r*.42,r,0,0,7);ctx.moveTo(cx-r,cy);ctx.lineTo(cx+r,cy);ctx.moveTo(cx-r*.92,cy-r*.45);ctx.lineTo(cx+r*.92,cy-r*.45);ctx.moveTo(cx-r*.92,cy+r*.45);ctx.lineTo(cx+r*.92,cy+r*.45);ctx.stroke();
+    // thành phố
+    skyline(bl.far,TC.far,base,false,0);
+    skyline(bl.near,TC.near,base,true,3);
+    // hai toà tháp
+    [[96,76,200],[790,84,226]].forEach(([x,w,h],k)=>{rect(x,base-h,w,h,'#080d26');rect(x+w/2-2,base-h-26,4,26,'#080d26');
+      for(let y=base-h+12;y<base-8;y+=13)for(let xx=x+7;xx<x+w-8;xx+=11)if(((xx*5+y*3+k)%6)<3)rect(xx,y,4,6,TC.win);
+      if(Math.sin(t*3+k)>0)rect(x+w/2-3,base-h-32,6,6,TC.sun2)});
+    rect(0,base,W,H-base,'#060a1f');
+    // tiêu đề
+    ctx.globalAlpha=1;
+    ctx.fillStyle=TC.glow;ctx.beginPath();ctx.arc(480,52,13,0,7);ctx.fill();ctx.strokeStyle=TC.sky1;ctx.lineWidth=2;ctx.beginPath();ctx.ellipse(480,52,5.5,13,0,0,7);ctx.moveTo(467,52);ctx.lineTo(493,52);ctx.stroke();
+    text('VẠN QUỐC',480,108,60,TC.ink,'center',800);
+    try{ctx.letterSpacing='5px'}catch(e){}
+    text('TẬP ĐOÀN ĐA QUỐC GIA',482,152,15,TC.glow,'center',800);
+    try{ctx.letterSpacing='0px'}catch(e){}
+    text('Từ thực tập sinh đến Tổng giám đốc',480,180,14,TC.dim,'center',600);
+    // menu
+    const it=items();
+    it.forEach((m,i)=>{
+      const y=214+i*46,s=i===sel&&m.on,w=330,x=480-w/2;
+      rr(x,y,w,36,18,s?TC.glow:'rgba(11,18,48,.78)',s?null:(m.on?'#4a56a8':'#2c3470'));
+      text(m.t,480,y+18,15,s?TC.sky1:(m.on?TC.ink:'#6b76b8'),'center',800);
+      if(s){text('▶',x+20,y+18,12,TC.sky1,'center');text('◀',x+w-20,y+18,12,TC.sky1,'center')}
+    });
+    text('↑↓ chọn  ·  Enter xác nhận',480,356,12,TC.dim,'center',600);
+    text(CLOUD.db?'☁ Tiến trình được lưu trên tài khoản của bạn':'Tiến trình được lưu trong trình duyệt này',480,H-12,11,CLOUD.db?TC.sun1:'#8a94d6','center',600);
   }
  }})();
 
