@@ -167,8 +167,38 @@ function startDay(){
 }
 const missionObj=id=>MPOOL.find(m=>m.id===id);
 const SAVE='vanquoc_save_v1';
-function save(){try{localStorage.setItem(SAVE,JSON.stringify(G))}catch(e){}}
 function load(){try{const s=localStorage.getItem(SAVE);return s?JSON.parse(s):null}catch(e){return null}}
+let SAVED=load();
+/* lưu trữ đám mây: chỉ hoạt động khi mở qua link Claude (có capability db + user) */
+const CLOUD={db:null,uid:null,ok:false,busy:false,pending:false,state:'local'};
+const savePath=()=>'data/users/'+CLOUD.uid+'/save';
+async function cloudInit(){
+  try{
+    if(!window.claude||!window.claude.use)return;
+    const [user,db]=await Promise.all([window.claude.use('user'),window.claude.use('db')]);
+    if(!user||!db)return;
+    const uid=await user.id();if(!uid)return;
+    CLOUD.db=db;CLOUD.uid=uid;CLOUD.state='cloud';
+    const snap=await db.doc(savePath()).get();
+    if(snap.exists){
+      const d=snap.data(),g=JSON.parse(d.g);
+      if(g&&g.p&&(!SAVED||(g.savedAt||0)>(SAVED.savedAt||0)))SAVED=g;
+    }
+  }catch(e){CLOUD.state=CLOUD.db?'cloud':'local'}
+}
+function cloudSave(){
+  if(!CLOUD.db)return;
+  CLOUD.pending=true;if(CLOUD.busy)return;CLOUD.busy=true;
+  (async()=>{
+    while(CLOUD.pending){
+      CLOUD.pending=false;
+      try{await CLOUD.db.doc(savePath()).set({g:JSON.stringify(G),ts:G.savedAt});CLOUD.ok=true}catch(e){CLOUD.ok=false}
+      try{const nat=G.p.nat;await CLOUD.db.doc('leaderboard/'+CLOUD.uid).set({name:G.p.name,nat,rank:G.rank,day:G.day,score:G.score,xp:G.xp,ts:G.savedAt})}catch(e){}
+    }
+    CLOUD.busy=false;
+  })();
+}
+function save(){G.savedAt=Date.now();SAVED=JSON.parse(JSON.stringify(G));try{localStorage.setItem(SAVE,JSON.stringify(G))}catch(e){}cloudSave()}
 function advance(){G.pi++;go(ORDER[G.pi])}
 function go(name){sceneName=name;scene=S[name];MU.setMood(name);scene.enter&&scene.enter()}
 
@@ -315,13 +345,14 @@ const isOK=c=>c==='Enter'||c==='NumpadEnter';
 const S={};
 
 // --- Tiêu đề
-S.title=(()=>{let t=0,sv=null;
+S.title=(()=>{let t=0;
  return{
-  enter(){sv=load();t=0},
+  enter(){t=0},
   update(dt){t+=dt},
   key(c){
     if(isOK(c)||c==='Space'){sfx.ok();go('setup')}
-    if(c==='KeyC'&&sv){G=sv;sfx.ok();startDay();go('brief')}
+    if(c==='KeyC'&&SAVED){G=JSON.parse(JSON.stringify(SAVED));sfx.ok();startDay();go('brief')}
+    if(c==='KeyL'){sfx.ok();go('rank')}
   },
   draw(){
     const g=ctx.createLinearGradient(0,0,0,H);g.addColorStop(0,'#0d1b2b');g.addColorStop(1,'#1e3550');ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
@@ -336,7 +367,9 @@ S.title=(()=>{let t=0,sv=null;
     text('TẬP ĐOÀN ĐA QUỐC GIA',480,150,16,C.teal,'center',800);
     text('Từ thực tập sinh đến Tổng giám đốc',480,180,15,C.dim,'center',600);
     if(blink(T)){text('Nhấn Enter để bắt đầu',480,236,18,C.amber,'center',800)}
-    if(sv)text('Nhấn C để chơi tiếp  ·  Ngày '+sv.day+'  ·  '+RANKS[sv.rank].n,480,266,13,C.green,'center',600);
+    if(SAVED)text('Nhấn C để chơi tiếp  ·  '+SAVED.p.name+'  ·  Ngày '+SAVED.day+'  ·  '+RANKS[SAVED.rank].n,480,266,13,C.green,'center',600);
+    text('Nhấn L để xem bảng xếp hạng',480,290,13,C.dim,'center',600);
+    text(CLOUD.db?'☁ Tiến trình được lưu trên tài khoản của bạn, mở lại ở đâu cũng chơi tiếp được':'Tiến trình được lưu trong trình duyệt này',480,H-30,12,CLOUD.db?C.teal:C.dim,'center',600);
   }
  }})();
 
@@ -760,6 +793,38 @@ S.out=(()=>{let s;return{
   }
 }})();
 
+
+// --- Bảng xếp hạng
+S.rank=(()=>{let rows,msg;return{
+  enter(){
+    rows=null;msg='Đang tải bảng xếp hạng...';
+    if(!CLOUD.db){msg='Bảng xếp hạng chỉ có khi mở game qua link Claude và đã đăng nhập.';return}
+    CLOUD.db.collection('leaderboard').orderBy('score','desc').limit(10).get()
+      .then(q=>{rows=q.docs.map(d=>Object.assign({me:d.id===CLOUD.uid},d.data()));if(!rows.length)msg='Chưa có ai trên bảng. Hãy hoàn thành một ngày làm việc để lên bảng.'})
+      .catch(()=>{msg='Không tải được bảng xếp hạng.'});
+  },
+  update(){},
+  key(c){if(c==='Escape'||isOK(c)||c==='Space'){sfx.step();go('title')}},
+  draw(){
+    rect(0,0,W,H,C.ink);for(let x=0;x<W;x+=48)rect(x,0,1,H,'#14222e');
+    text('Bảng xếp hạng Vạn Quốc',48,52,26,C.txt,'left',800);
+    text('Top 10 theo tổng điểm. Điểm được cập nhật mỗi lần tan làm.',48,82,13,C.dim);
+    rr(48,110,864,370,10,C.panel,C.line);
+    if(!rows||!rows.length){text(msg,480,290,15,C.dim,'center',600)}
+    else rows.forEach((r,i)=>{
+      const y=146+i*34;
+      if(r.me)rr(56,y-15,848,30,6,'#1d3a50',C.teal);
+      text('#'+(i+1),80,y,15,i<3?C.amber:C.dim,'left',800);
+      if(NAT.some(n=>n.id===r.nat))flag(130,y-9,26,18,r.nat);
+      text(String(r.name||'Ẩn danh').slice(0,16)+(r.me?' (bạn)':''),170,y,14,C.txt,'left',800);
+      text(RANKS[clamp(r.rank|0,0,6)].n,420,y,13,C.teal,'left',600);
+      text('Ngày '+r.day,640,y,13,C.dim,'left',600);
+      text(String(r.score),880,y,15,C.amber,'right',800);
+    });
+    text('Esc hoặc Enter: quay lại',W/2,516,12,C.dim,'center');
+  }
+}})();
+
 /* ---------- vòng lặp ---------- */
 let last=0;
 function loop(ts){
@@ -774,6 +839,7 @@ function loop(ts){
   requestAnimationFrame(loop);
 }
 go('title');
+cloudInit();
 requestAnimationFrame(loop);
 })();
 </script>
