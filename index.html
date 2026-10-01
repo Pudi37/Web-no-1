@@ -166,14 +166,69 @@ const FOOD={
 const TEAS=[{n:'Trà sữa',c:'#c9a27a',p:7},{n:'Trà đào',c:'#ffb27a',p:7},{n:'Matcha latte',c:'#9ccc65',p:9},{n:'Trà vải',c:'#f4b6c2',p:8}];
 const SUGAR=['0%','30%','50%','70%','100%'], ICE=['Không đá','Ít đá','Vừa đá','Nhiều đá'], TOP=['Trân châu','Thạch dừa','Pudding','Không topping'];
 const ORDER=['checkin','work1','lunch','nap','work2','tea','out'];
-const MPOOL=[
- {id:'docs',t:r=>'Giao '+(4+r*2)+' tài liệu',ok:(d,r)=>d.docs>=4+r*2},
- {id:'clean',t:()=>'Làm việc không va chạm',ok:d=>d.worked>0&&d.bumps===0},
- {id:'ci',t:()=>'Điểm danh Hoàn hảo',ok:d=>d.checkin==='perfect'},
- {id:'lunch',t:()=>'Ăn trưa lành mạnh',ok:d=>d.healthy},
- {id:'nap',t:()=>'Ngủ trưa đúng 15-25 phút',ok:d=>d.napPerfect},
- {id:'tea',t:()=>'Đặt trà sữa đúng 2 yêu cầu',ok:d=>d.tea>=2},
+/* Nhiệm vụ riêng cho từng cấp (chỉ số = cấp trong RANKS).
+   kind 'goal': đạt một lần là giữ luôn. kind 'keep': phải giữ tới cuối ngày, chốt ở màn tan làm.
+   ok(d,G): điều kiện thành công. fail(d,G): đã hỏng không thể cứu. hold(d,G): (keep) hiện đang đúng. prog(d,G): tiến độ. */
+const pr=(a,b)=>Math.min(a,b)+'/'+b;
+const M=(id,t,kind,ok,o)=>Object.assign({id,t,kind,ok},o);
+const lateCI=d=>d.checkin==='late';
+const MISSIONS=[
+ [ // 0 Thực tập sinh
+  M('r0_docs','Giao 4 tài liệu','goal',d=>d.docs>=4,{prog:d=>pr(d.docs,4)}),
+  M('r0_ontime','Đến đúng giờ','goal',d=>d.checkin==='good'||d.checkin==='perfect',{fail:lateCI}),
+  M('r0_ate','Không bỏ bữa','goal',d=>d.ate,{fail:d=>d.lunchDone&&!d.ate}),
+  M('r0_nap','Chợp mắt ít nhất 10 phút','goal',d=>d.napMin>=10,{fail:d=>d.napDone&&d.napMin<10}),
+  M('r0_tea','Trà sữa đúng ít nhất 1 yêu cầu','goal',d=>d.tea>=1,{fail:d=>d.teaDone&&d.tea<1}),
+ ],
+ [ // 1 Nhân viên
+  M('r1_docs','Giao 6 tài liệu','goal',d=>d.docs>=6,{prog:d=>pr(d.docs,6)}),
+  M('r1_trip','Một chuyến đầy tay','goal',d=>d.fullTrips>=1),
+  M('r1_cleanam','Buổi sáng không va chạm','keep',d=>d.worked>=1&&d.bumpsAM===0,{fail:d=>d.bumpsAM>0}),
+  M('r1_lunch','Ăn trưa lành mạnh','goal',d=>d.healthy,{fail:d=>d.lunchDone&&!d.healthy}),
+  M('r1_nap','Ngủ trưa 15–25 phút','goal',d=>d.napPerfect,{fail:d=>d.napDone&&!d.napPerfect}),
+ ],
+ [ // 2 Chuyên viên
+  M('r2_docs','Giao 9 tài liệu, mỗi buổi ≥4','goal',d=>d.docsAM>=4&&d.docsPM>=4&&d.docs>=9,{prog:d=>pr(d.docs,9)}),
+  M('r2_bump','Va chạm tối đa 1 lần','keep',d=>d.worked>=2&&d.bumps<=1,{fail:d=>d.bumps>1}),
+  M('r2_ci','Điểm danh Hoàn hảo','goal',d=>d.checkin==='perfect',{fail:d=>d.checkin&&d.checkin!=='perfect'}),
+  M('r2_tea','Trà sữa đúng 2/3','goal',d=>d.tea>=2,{fail:d=>d.teaDone&&d.tea<2}),
+  M('r2_energy','Năng lượng tan làm ≥ 40','keep',(d,G)=>G.energy>=40,{hold:(d,G)=>G.energy>=40}),
+ ],
+ [ // 3 Trưởng nhóm (mở tài liệu khẩn)
+  M('r3_docs','Giao 12 tài liệu','goal',d=>d.docs>=12,{prog:d=>pr(d.docs,12)}),
+  M('r3_urgent','Giao 3 tài liệu khẩn đúng hạn','goal',d=>d.urgentDone>=3,{prog:d=>pr(d.urgentDone,3)}),
+  M('r3_clean','Không va chạm cả ngày','keep',d=>d.worked>=2&&d.bumps===0,{fail:d=>d.bumps>0}),
+  M('r3_tea','Trà sữa đúng 3/3','goal',d=>d.tea>=3,{fail:d=>d.teaDone&&d.tea<3}),
+  M('r3_mood','Tâm trạng tan làm ≥ 50','keep',(d,G)=>G.mood>=50,{hold:(d,G)=>G.mood>=50}),
+ ],
+ [ // 4 Trưởng phòng (mở cuộc gọi của Sếp)
+  M('r4_docs','Giao 15 tài liệu, 3 chuyến đầy','goal',d=>d.docs>=15&&d.fullTrips>=3,{prog:d=>pr(d.docs,15)+' · '+pr(d.fullTrips,3)}),
+  M('r4_calls','Trả lời cả 2 cuộc gọi của Sếp','goal',d=>d.callsOk>=2,{prog:d=>pr(d.callsOk,2)}),
+  M('r4_save','Tiết kiệm: chi ≤ 15 xu, có ăn','keep',d=>d.spent<=15&&d.ate,{fail:d=>d.spent>15||(d.lunchDone&&!d.ate),hold:d=>d.spent<=15,prog:d=>d.spent+'/15 xu'}),
+  M('r4_ci','Hoàn hảo, chuỗi điểm danh ≥ 3','goal',(d,G)=>d.checkin==='perfect'&&G.streak>=3,{fail:d=>d.checkin&&d.checkin!=='perfect'}),
+  M('r4_both','Năng lượng, tâm trạng ≥ 40','keep',(d,G)=>G.energy>=40&&G.mood>=40,{hold:(d,G)=>G.energy>=40&&G.mood>=40}),
+ ],
+ [ // 5 Giám đốc (áp lực cao)
+  M('r5_docs','Giao 18 tài liệu, không rơi','goal',d=>d.docs>=18&&d.dropped===0,{fail:d=>d.dropped>0,prog:d=>pr(d.docs,18)}),
+  M('r5_urgent','Giao 5 khẩn, không lỡ cái nào','keep',d=>d.urgentDone>=5&&d.urgentMissed===0,{fail:d=>d.urgentMissed>0,prog:d=>pr(d.urgentDone,5)}),
+  M('r5_life','Ăn lành mạnh + ngủ 15–25p','goal',d=>d.healthy&&d.napPerfect,{fail:d=>(d.lunchDone&&!d.healthy)||(d.napDone&&!d.napPerfect)}),
+  M('r5_pm','Buổi chiều không va chạm','keep',d=>d.worked>=2&&d.bumpsPM===0,{fail:d=>d.bumpsPM>0}),
+  M('r5_floor','Không tụt dưới 30 cả ngày','keep',d=>d.minEnergy>=30&&d.minMood>=30,{fail:d=>d.minEnergy<30||d.minMood<30}),
+ ],
+ [ // 6 Tổng giám đốc
+  M('r6_docs','Giao 22 tài liệu','goal',d=>d.docs>=22,{prog:d=>pr(d.docs,22)}),
+  M('r6_perfect','Ngày hoàn hảo','keep',d=>d.checkin==='perfect'&&d.bumps===0&&d.worked>=2&&d.tea>=3,{fail:d=>(d.checkin&&d.checkin!=='perfect')||d.bumps>0||(d.teaDone&&d.tea<3)}),
+  M('r6_streak','Chuỗi điểm danh ≥ 7 ngày','goal',(d,G)=>(d.checkin==='good'||d.checkin==='perfect')&&G.streak>=7,{fail:lateCI,prog:(d,G)=>pr(G.streak,7)}),
+  M('r6_both','Năng lượng, tâm trạng ≥ 60','keep',(d,G)=>G.energy>=60&&G.mood>=60,{hold:(d,G)=>G.energy>=60&&G.mood>=60}),
+  M('r6_profit','Lãi ít nhất 150 xu trong ngày','keep',(d,G)=>G.money-d.money0>=150,{hold:(d,G)=>G.money-d.money0>=150}),
+ ],
 ];
+const MISSION_XP=[30,40,50,65,80,100,120];
+const INTROS={
+ 3:{h:'Mới mở: Tài liệu khẩn',l:['Thỉnh thoảng một tài liệu màu đỏ xuất hiện trên bàn.','Nhặt trong 8 giây, rồi giao cho Sếp trong 10 giây.','Giao kịp được thưởng thêm điểm, lỡ hạn thì tính là bỏ lỡ.','Tài liệu khẩn chiếm một trong 3 chỗ mang tài liệu.']},
+ 4:{h:'Mới mở: Cuộc gọi của Sếp',l:['Mỗi buổi làm việc Sếp gọi một lần.','Khi điện thoại reo, chạy vào phòng Sếp trong 10 giây.','Trả lời kịp được +5 tâm trạng, lỡ cuộc gọi bị -5.']},
+ 5:{h:'Mới mở: Áp lực cao',l:['Đồng nghiệp đi nhanh gấp 1,5 lần và có thêm một người đi dọc hành lang.','Mỗi buổi làm việc kéo dài 55 giây.','Chỉ tiêu tài liệu cũng cao hơn tương ứng.']},
+};
 
 const WORK_COST=20;      // năng lượng mất sau mỗi buổi làm việc
 const BURN_AT=10;        // kiệt sức khi năng lượng hoặc tâm trạng <= mức này lúc tan làm
@@ -186,20 +241,45 @@ const has=id=>G.p.nat===id;
 /* mọi hệ số XP gom về một chỗ để số hiển thị khớp số thực nhận */
 const xpMul=()=>1+(has('in')?.05:0)+(G.p.age>=40?.1:0);
 function addXP(n){const v=Math.round(n*xpMul());G.xp+=v;G.dayXP+=v;return v}
-const missionBase=()=>Math.round((30+G.rank*10)*(has('de')?1.2:1));
+const missionBase=()=>Math.round(MISSION_XP[G.rank]*(has('de')?1.2:1));
 const missionXP=()=>Math.round(missionBase()*xpMul());
 function addScore(n){G.score+=Math.round(n);G.dayScore+=Math.round(n)}
 function toast(s,col=C.amber){toasts.push({s,col,t:0})}
-const stat=(k,d)=>{G[k]=clamp(G[k]+d,0,100)};
-function newGame(p){G={p,day:1,xp:0,rank:0,score:0,money:40,energy:90,mood:70,streak:0,warn:0,clock:480,pi:0,missions:[],ds:null,dayXP:0,dayScore:0,promoted:false};startDay()}
+const stat=(k,d)=>{G[k]=clamp(G[k]+d,0,100);if(G.ds){G.ds.minEnergy=Math.min(G.ds.minEnergy,G.energy);G.ds.minMood=Math.min(G.ds.minMood,G.mood)}};
+function newGame(p){G={p,day:1,xp:0,rank:0,score:0,money:40,energy:90,mood:70,streak:0,warn:0,clock:480,pi:0,missions:[],ds:null,dayXP:0,dayScore:0,promoted:false,seenIntro:{}};startDay()}
+const missionObj=id=>{for(const l of MISSIONS){const m=l.find(x=>x.id===id);if(m)return m}return null};
+/* ngày mới: nhiệm vụ giao tài liệu của cấp hiện tại, cộng 2 nhiệm vụ ngẫu nhiên khác của cấp đó */
+function pickMissions(){
+  const list=MISSIONS[clamp(G.rank,0,MISSIONS.length-1)];
+  return [list[0],...list.slice(1).sort(()=>Math.random()-.5).slice(0,2)].map(m=>m.id);
+}
+function ensureMissions(){
+  const cur=MISSIONS[clamp(G.rank,0,MISSIONS.length-1)].map(m=>m.id);
+  if(!G.missions||G.missions.length!==3||!G.missions.every(id=>cur.includes(id)))G.missions=pickMissions();
+}
 function startDay(){
-  const others=MPOOL.filter(m=>m.id!=='docs').sort(()=>Math.random()-.5).slice(0,2);
-  G.missions=[MPOOL[0],...others].map(m=>m.id);
-  G.ds={docs:0,bumps:0,worked:0,checkin:null,healthy:false,napPerfect:false,tea:0,paid:false};
+  G.missions=pickMissions();
+  G.ds={docs:0,docsAM:0,docsPM:0,fullTrips:0,bumps:0,bumpsAM:0,bumpsPM:0,dropped:0,urgentDone:0,urgentMissed:0,calls:0,callsOk:0,
+        spent:0,money0:G.money,minEnergy:G.energy,minMood:G.mood,napMin:0,napPerfect:false,ate:false,healthy:false,checkin:null,tea:0,worked:0,
+        teaDone:false,lunchDone:false,napDone:false,done:{}};
   G.dayXP=0;G.dayScore=0;G.pi=0;G.clock=480;
   if(G.warn==null)G.warn=0;
+  if(!G.seenIntro)G.seenIntro={};
 }
-const missionObj=id=>MPOOL.find(m=>m.id===id);
+/* trạng thái hiển thị: done (✓ xanh), fail (✗ đỏ), keep (đang giữ, cam), todo (chưa đạt) */
+function mState(m){
+  const d=G.ds;
+  if(m.kind==='goal'){if(d.done[m.id])return 'done';return m.fail&&m.fail(d,G)?'fail':'todo'}
+  if(m.fail&&m.fail(d,G))return 'fail';
+  return (m.hold?m.hold(d,G):true)?'keep':'todo';
+}
+/* nhiệm vụ 'goal' đạt một lần là giữ luôn */
+function updateMissions(){
+  if(!G||!G.ds)return;
+  G.missions.forEach(id=>{const m=missionObj(id);if(m&&m.kind==='goal'&&!G.ds.done[id]&&m.ok(G.ds,G))G.ds.done[id]=true});
+}
+const mLabel=m=>m.t+(m.prog?' ('+m.prog(G.ds,G)+')':'');
+const mPass=m=>m.kind==='goal'?!!G.ds.done[m.id]:!!m.ok(G.ds,G);
 const SAVE='vanquoc_save_v1';
 function load(){try{const s=localStorage.getItem(SAVE);return s?JSON.parse(s):null}catch(e){return null}}
 let SAVED=load();
@@ -273,7 +353,7 @@ function person(x,y,p,sc=1,o={}){
   ctx.fillStyle='#111';
   if(o.sleep||blinkNow){ctx.fillRect(-5,-41+bob,3,1);ctx.fillRect(2,-41+bob,3,1)}else{ctx.fillRect(-4,-42+bob,2,2.5);ctx.fillRect(2,-42+bob,2,2.5)}
   ctx.strokeStyle='#5a2a1a';ctx.lineWidth=1;ctx.beginPath();ctx.arc(0,-38+bob,2.5,.2,Math.PI-.2);ctx.stroke();
-  if(o.carry){for(let i=0;i<o.carry;i++){rect(-9,-62-i*5+bob,18,4,'#f5f5f0');rect(-9,-62-i*5+bob,18,1,'#cfd4d8')}}
+  if(o.carry){for(let i=0;i<o.carry;i++){rect(-9,-62-i*5+bob,18,4,i<(o.urg||0)?'#ef476f':'#f5f5f0');rect(-9,-62-i*5+bob,18,1,i<(o.urg||0)?'#a02c45':'#cfd4d8')}}
   ctx.restore();
 }
 function skyColor(m){const t=clamp((m-480)/600,0,1);return t<.5?mix('#8fd0f5','#4aa3e8',t*2):mix('#4aa3e8','#f2a65a',(t-.5)*2)}
@@ -337,16 +417,26 @@ function hud(){
   text('Xu',806,16,11,C.dim,'right');text(String(G.money),806,36,18,C.amber,'right',800);
   rect(850,0,110,56,C.ink);
   text('Mục tiêu',905,16,10,C.dim,'center');
-  const done=G.missions.filter(id=>missionObj(id).ok(G.ds,G.rank)).length;
+  const done=G.missions.filter(id=>mState(missionObj(id))==='done').length;
   text(done+'/3',905,37,18,done===3?C.green:C.txt,'center',800);
+}
+function fitText(str,x,y,maxW,col,weight=600){
+  let f=12;ctx.font=weight+' '+f+'px '+FONT;
+  while(f>9&&ctx.measureText(str).width>maxW){f--;ctx.font=weight+' '+f+'px '+FONT}
+  text(str,x,y,f,col,'left',weight);
+}
+function mIcon(st,x,y){
+  if(st==='done'){rr(x,y,16,16,4,C.green);text('✓',x+8,y+8,12,C.ink,'center',800)}
+  else if(st==='fail'){rr(x,y,16,16,4,C.coral);text('✗',x+8,y+8,12,C.ink,'center',800)}
+  else if(st==='keep'){ctx.strokeStyle=C.amber;ctx.lineWidth=2;ctx.beginPath();ctx.arc(x+8,y+8,7,0,7);ctx.stroke();ctx.fillStyle=C.amber;ctx.beginPath();ctx.arc(x+8,y+8,2.5,0,7);ctx.fill()}
+  else rr(x,y,16,16,4,null,C.line);
 }
 function strip(hint){
   rect(0,490,W,50,C.panel);rect(0,490,W,2,C.line);
   G.missions.forEach((id,i)=>{
-    const m=missionObj(id),ok=m.ok(G.ds,G.rank),x=16+i*310;
-    rr(x,498,16,16,4,ok?C.green:null,ok?null:C.line);
-    if(ok)text('✓',x+8,506,12,C.ink,'center',800);
-    text(m.t(G.rank),x+24,506,12,ok?C.green:C.txt,'left',600);
+    const m=missionObj(id),st=mState(m),x=16+i*310;
+    mIcon(st,x,498);
+    fitText(mLabel(m),x+24,506,276,st==='done'?C.green:st==='fail'?C.coral:st==='keep'?C.amber:C.txt);
   });
   if(hint)text(hint,W/2,528,12,C.dim,'center',600);
 }
@@ -528,12 +618,20 @@ S.setup=(()=>{
  }})();
 
 // --- Bản tin đầu ngày
-S.brief=(()=>{let t=0;return{
-  enter(){t=0;G.clock=480;G.pi=0},
+S.brief=(()=>{let t=0,intro=null;return{
+  enter(){
+    t=0;G.clock=480;G.pi=0;ensureMissions();
+    if(!G.ds||!G.ds.done)startDay();
+    intro=INTROS[G.rank]&&!(G.seenIntro&&G.seenIntro[G.rank])?G.rank:null;
+  },
   update(dt){t+=dt},
-  key(c){if(isOK(c)||c==='Space'){sfx.ok();G.pi=0;go('checkin')}},
+  key(c){
+    if(!(isOK(c)||c==='Space'))return;
+    if(intro!=null){G.seenIntro=G.seenIntro||{};G.seenIntro[intro]=true;intro=null;sfx.step();return}
+    sfx.ok();G.pi=0;go('checkin');
+  },
   draw(){
-    officeBG();hud();strip('Enter: bắt đầu ngày làm việc');
+    officeBG();hud();strip(intro!=null?'Enter: đã hiểu':'Enter: bắt đầu ngày làm việc');
     rr(190,100,580,370,12,'rgba(19,33,45,.96)',C.line);
     text('Ngày '+G.day+' tại Vạn Quốc',480,138,26,C.txt,'center',800);
     text('08:00  ·  Thành phố của '+natOf().name,480,168,13,C.dim,'center');
@@ -545,8 +643,21 @@ S.brief=(()=>{let t=0;return{
     text('Chuỗi điểm danh: '+G.streak+' ngày',290,282,12,G.streak?C.amber:C.dim);
     if(G.warn)text('Cảnh cáo kiệt sức: '+G.warn+'/'+MAX_WARN+'  ·  giữ năng lượng và tâm trạng trên '+BURN_AT+' lúc tan làm',290,302,12,C.coral,'left',800);
     text('NHIỆM VỤ HÔM NAY',210,326,12,C.dim,'left',800);
-    G.missions.forEach((id,i)=>{const m=missionObj(id);rr(210,342+i*34,540,28,6,'#0f1c27',C.line);text(m.t(G.rank),224,356+i*34,14,C.txt,'left',600);text('+'+missionXP()+' XP',736,356+i*34,13,C.amber,'right',800)});
-    if(blink(t))text('Nhấn Enter',480,454,15,C.amber,'center',800);
+    G.missions.forEach((id,i)=>{
+      const m=missionObj(id),y=342+i*34;
+      rr(210,y,540,28,6,'#0f1c27',C.line);
+      text(m.t,224,y+14,14,C.txt,'left',600);
+      if(m.kind==='keep')text('giữ tới cuối ngày',600,y+14,11,C.dim,'right',600);
+      text('+'+missionXP()+' XP',736,y+14,13,C.amber,'right',800);
+    });
+    if(intro==null&&blink(t))text('Nhấn Enter',480,454,15,C.amber,'center',800);
+    if(intro!=null){
+      const c=INTROS[intro];
+      rect(0,58,W,432,'rgba(10,18,26,.82)');rr(220,140,520,260,12,C.panel,C.amber);
+      text(c.h,480,176,22,C.amber,'center',800);
+      c.l.forEach((ln,i)=>text(ln,480,222+i*30,14,C.txt,'center',600));
+      if(blink(t))text('Nhấn Enter để tiếp tục',480,372,14,C.amber,'center',800);
+    }
   }
 }})();
 
@@ -598,17 +709,24 @@ function workScene(pm){
   const spots=[[70,126],[70,262],[70,430],[330,126],[330,262],[330,430],[590,126],[590,262],[590,430],[800,262],[800,430],[250,262],[520,262],[250,430],[520,430],[770,200]];
   let s;
   const hit=(px,py)=>desks.some(d=>px+9>d[0]&&px-9<d[0]+130&&py>d[1]&&py-8<d[1]+56);
+  const inBoss=()=>s.px>830&&s.py<200;                 // vùng giao tài liệu / nghe điện thoại Sếp
+  const URGENT_LIFE=8,URGENT_CARRY=10,CALL_LIFE=10;
   return{
     enter(){
       G.clock=pm?810:540;
-      s={t:0,tl:45,px:60,py:262,walk:0,carry:0,flip:false,stun:0,docs:[],spawn:0,got:0,bumps:0,gain:0,done:false,paused:false,flash:0,rt:0,
+      const hp=G.rank>=5,mul=(pm?1.25:1)*(hp?1.5:1);
+      s={t:0,tl:hp?55:45,px:60,py:262,walk:0,carry:0,urg:[],flip:false,stun:0,docs:[],spawn:0,uT:rand(8,12),got:0,bumps:0,gain:0,done:false,paused:false,flash:0,rt:0,
+         call:null,called:false,callAt:G.rank>=4?rand(10,35):null,ring:0,
          npcs:[{x:200,y:263,v:90,n:{nat:'us',female:true,skin:1,shirt:3}},{x:700,y:263,v:-110,n:{nat:'de',female:false,skin:0,shirt:2}},{x:400,y:426,v:100,n:{nat:'br',female:false,skin:3,shirt:4}}]};
-      if(pm)s.npcs.forEach(n=>n.v*=1.25);
-      for(let i=0;i<3;i++)this.spawn();
+      s.npcs.forEach(n=>n.v*=mul);
+      // áp lực cao: thêm một đồng nghiệp đi dọc theo cột x=320, không có bàn
+      if(hp)s.npcs.push({x:320,y:300,v:0,vy:100*mul,n:{nat:'jp',female:true,skin:0,shirt:1}});
+      for(let i=0;i<3;i++)this.spawn(false);
     },
-    spawn(){
+    spawn(urgent){
       const free=spots.filter(p=>!s.docs.some(d=>d.x===p[0]&&d.y===p[1])&&Math.hypot(p[0]-s.px,p[1]-s.py)>140);
-      if(!free.length)return;const p=pick(free);s.docs.push({x:p[0],y:p[1],t:rand(0,6)});
+      if(!free.length)return;const p=pick(free);
+      s.docs.push({x:p[0],y:p[1],t:rand(0,6),u:!!urgent,life:URGENT_LIFE});
     },
     update(dt){
       if(s.done){s.rt+=dt;return}
@@ -623,25 +741,57 @@ function workScene(pm){
       const nx=clamp(s.px+dx*sp*dt,24,936);if(!hit(nx,s.py))s.px=nx;
       const ny=clamp(s.py+dy*sp*dt,118,478);if(!hit(s.px,ny))s.py=ny;
       s.walk=(dx||dy)?s.walk+dt:0;
-      if(dx||dy){s.pf=(s.pf||0)-dt;if(s.pf<=0){fx.puff(s.px,s.py);s.pf=.13}if(s.carry&&Math.random()<dt*14)fx.spark(s.px+rand(-10,10),s.py-30,'#ffd166',1)}
-      s.docs.forEach(d=>d.t+=dt);
-      s.docs=s.docs.filter(d=>{if(s.carry<3&&Math.hypot(d.x-s.px,d.y-(s.py-14))<26){s.carry++;sfx.pick();fx.spark(d.x,d.y-8,'#ffd166',8);fx.text(d.x,d.y-24,'+1 tài liệu',C.txt);return false}return true});
-      s.spawn-=dt;if(s.docs.length<3&&s.spawn<=0){this.spawn();s.spawn=1.1}
-      if(s.carry>0&&s.px>830&&s.py<200){
-        const n=s.carry,pts=n*10+(n-1)*8;s.carry=0;s.got+=n;G.ds.docs+=n;
-        const v=Math.round(pts*(1+G.rank*.2));addScore(v);s.gain+=v;sfx.ok();toast('Đã giao '+n+' tài liệu  +'+v,C.green);fx.coins(880,150,6+n*3);fx.text(880,120,'+'+v,C.amber);fx.spark(s.px,s.py-40,C.green,12);
+      if(dx||dy){s.pf=(s.pf||0)-dt;if(s.pf<=0){fx.puff(s.px,s.py);s.pf=.13}if(s.carry&&Math.random()<dt*14)fx.spark(s.px+rand(-10,10),s.py-30,s.urg.length?'#ef476f':'#ffd166',1)}
+      // nhặt tài liệu; tài liệu khẩn hết hạn trên bàn thì biến mất
+      s.docs.forEach(d=>{d.t+=dt;if(d.u)d.life-=dt});
+      s.docs=s.docs.filter(d=>{
+        if(s.carry<3&&Math.hypot(d.x-s.px,d.y-(s.py-14))<26){
+          s.carry++;sfx.pick();fx.spark(d.x,d.y-8,d.u?'#ef476f':'#ffd166',8);
+          if(d.u){s.urg.push(URGENT_CARRY);toast('Tài liệu khẩn! Giao cho Sếp trong '+URGENT_CARRY+' giây',C.coral)}
+          else fx.text(d.x,d.y-24,'+1 tài liệu',C.txt);
+          return false;
+        }
+        if(d.u&&d.life<=0){G.ds.urgentMissed++;toast('Lỡ tài liệu khẩn',C.coral);sfx.bad();return false}
+        return true;
+      });
+      // tài liệu khẩn đang cầm quá hạn: thành tài liệu thường, tính là bỏ lỡ
+      if(s.urg.length){
+        s.urg=s.urg.map(x=>x-dt);
+        const ex=s.urg.filter(x=>x<=0).length;
+        if(ex){G.ds.urgentMissed+=ex;toast('Quá hạn tài liệu khẩn',C.coral);sfx.bad();s.urg=s.urg.filter(x=>x>0)}
       }
+      s.spawn-=dt;if(s.docs.filter(d=>!d.u).length<3&&s.spawn<=0){this.spawn(false);s.spawn=1.1}
+      if(G.rank>=3){s.uT-=dt;if(s.uT<=0){s.uT=rand(8,12);if(!s.docs.some(d=>d.u))this.spawn(true)}}
+      // giao tài liệu
+      if(s.carry>0&&inBoss()){
+        const n=s.carry,u=s.urg.length,pts=n*10+(n-1)*8;
+        s.carry=0;s.urg=[];s.got+=n;G.ds.docs+=n;G.ds[pm?'docsPM':'docsAM']+=n;if(n===3)G.ds.fullTrips++;
+        let v=Math.round(pts*(1+G.rank*.2));
+        if(u){G.ds.urgentDone+=u;v+=Math.round(15*u*(1+G.rank*.2))}
+        addScore(v);s.gain+=v;sfx.ok();
+        toast('Đã giao '+n+' tài liệu'+(u?' ('+u+' khẩn)':'')+'  +'+v,C.green);
+        fx.coins(880,150,6+n*3);fx.text(880,120,'+'+v,C.amber);fx.spark(s.px,s.py-40,C.green,12);
+      }
+      // cuộc gọi của Sếp: mỗi buổi đúng một lần
+      if(s.callAt!=null&&!s.called&&s.t>=s.callAt){s.called=true;G.ds.calls++;s.call={left:CALL_LIFE};s.ring=0;toast('Sếp gọi! Vào phòng Sếp trong '+CALL_LIFE+' giây',C.amber)}
+      if(s.call){
+        s.call.left-=dt;s.ring-=dt;if(s.ring<=0){beep(880,.08,'square',.06);s.ring=.7}
+        if(inBoss()){G.ds.callsOk++;stat('mood',5);toast('Đã nghe máy Sếp  +5 tâm trạng',C.green);fx.spark(880,130,C.green,12);s.call=null;sfx.ok()}
+        else if(s.call.left<=0){stat('mood',-5);toast('Lỡ cuộc gọi của Sếp  -5 tâm trạng',C.coral);s.call=null;sfx.bad()}
+      }
+      // đồng nghiệp
       s.npcs.forEach(n=>{
-        n.x+=n.v*dt;if(n.x>800){n.x=800;n.v=-Math.abs(n.v)}if(n.x<40){n.x=40;n.v=Math.abs(n.v)}
+        if(n.vy!==undefined){n.y+=n.vy*dt;if(n.y>478){n.y=478;n.vy=-Math.abs(n.vy)}if(n.y<118){n.y=118;n.vy=Math.abs(n.vy)}}
+        else{n.x+=n.v*dt;if(n.x>800){n.x=800;n.v=-Math.abs(n.v)}if(n.x<40){n.x=40;n.v=Math.abs(n.v)}}
         if(s.stun<=0&&Math.abs(n.x-s.px)<20&&Math.abs(n.y-s.py)<12){
-          s.stun=.9;s.bumps++;G.ds.bumps++;s.flash=.3;stat('mood',-2);sfx.bad();shake=9;fx.emo(s.px,s.py-62,'💫',3);fx.spark(s.px,s.py-30,'#ef476f',10);
-          if(s.carry){toast('Rơi '+s.carry+' tài liệu!',C.coral);s.carry=0}else toast('Va chạm đồng nghiệp!',C.coral);
+          s.stun=.9;s.bumps++;G.ds.bumps++;G.ds[pm?'bumpsPM':'bumpsAM']++;s.flash=.3;stat('mood',-2);sfx.bad();shake=9;fx.emo(s.px,s.py-62,'💫',3);fx.spark(s.px,s.py-30,'#ef476f',10);
+          if(s.carry){G.ds.dropped+=s.carry;G.ds.urgentMissed+=s.urg.length;toast('Rơi '+s.carry+' tài liệu!',C.coral);s.carry=0;s.urg=[]}
+          else toast('Va chạm đồng nghiệp!',C.coral);
         }
       });
       if(s.t>=s.tl){
-        s.done=true;G.ds.worked++;
+        s.done=true;s.call=null;G.ds.worked++;
         const xp=addXP(s.got*4+(s.bumps===0?10:0));stat('energy',-WORK_COST);stat('mood',-2);s.xp=xp;
-        if(s.got)G.streakDocs=(G.streakDocs||0)+s.got;
         sfx.win();fx.confetti(480,200,60);
       }
     },
@@ -654,19 +804,30 @@ function workScene(pm){
       // phòng sếp
       rect(830,96,100,70,'#4a3a2a');rect(836,102,88,58,'#2a1f16');rect(846,96,68,16,C.amber);text('SẾP',880,104,11,C.ink,'center',800);
       rr(842,126,76,30,4,'rgba(255,183,3,.25)',C.amber);text('GIAO',880,141,12,C.amber,'center',800);
+      if(s.call&&Math.sin(T*14)>0)emo('📞',880,84,26);
       desks.forEach(d=>{
         rect(d[0],d[1],130,56,'#7a5a3b');rect(d[0],d[1]+44,130,12,'#5a4029');
         rect(d[0]+46,d[1]-22,38,26,'#1b2a38');rect(d[0]+49,d[1]-19,32,18,'#3da5d9');rect(d[0]+60,d[1]+4,10,6,'#1b2a38');
         rect(d[0]+8,d[1]+16,26,18,'#f5f5f0');rect(d[0]+96,d[1]+18,16,16,'#d6d0c4');
       });
-      s.docs.forEach(d=>{const b=Math.sin(d.t*4)*3;rect(d.x-12,d.y-16+b,24,18,'#f8f8f2');rect(d.x-8,d.y-12+b,16,2,'#8fa6b8');rect(d.x-8,d.y-7+b,12,2,'#8fa6b8');ctx.strokeStyle=C.amber;ctx.lineWidth=2;ctx.strokeRect(d.x-13,d.y-17+b,26,20)});
-      const ents=[{y:s.py,f:()=>{if(s.flash>0&&Math.floor(T*20)%2)ctx.globalAlpha=.4;person(s.px,s.py,G.p,1,{walk:s.walk,flip:s.flip,carry:s.carry,aura:22+s.carry*8+Math.sin(T*6)*2});ctx.globalAlpha=1}}];
-      s.npcs.forEach(n=>ents.push({y:n.y,f:()=>person(n.x,n.y,n.n,1,{walk:T,flip:n.v<0})}));
+      s.docs.forEach(d=>{
+        const b=Math.sin(d.t*4)*3;
+        rect(d.x-12,d.y-16+b,24,18,d.u?'#ff6b81':'#f8f8f2');rect(d.x-8,d.y-12+b,16,2,d.u?'#a02c45':'#8fa6b8');rect(d.x-8,d.y-7+b,12,2,d.u?'#a02c45':'#8fa6b8');
+        ctx.strokeStyle=d.u?C.coral:C.amber;ctx.lineWidth=2;ctx.strokeRect(d.x-13,d.y-17+b,26,20);
+        if(d.u){ // vòng đếm ngược quanh tài liệu khẩn
+          ctx.lineWidth=3;ctx.beginPath();ctx.arc(d.x,d.y-8+b,22,-Math.PI/2,-Math.PI/2+Math.PI*2*clamp(d.life/URGENT_LIFE,0,1));ctx.stroke();
+          text('KHẨN',d.x,d.y-34+b,10,C.coral,'center',800);
+        }
+      });
+      const ents=[{y:s.py,f:()=>{if(s.flash>0&&Math.floor(T*20)%2)ctx.globalAlpha=.4;person(s.px,s.py,G.p,1,{walk:s.walk,flip:s.flip,carry:s.carry,urg:s.urg.length,aura:22+s.carry*8+Math.sin(T*6)*2});ctx.globalAlpha=1}}];
+      s.npcs.forEach(n=>ents.push({get y(){return n.y},f:()=>person(n.x,n.y,n.n,1,{walk:T,flip:n.v<0})}));
       ents.sort((a,b)=>a.y-b.y).forEach(e=>e.f());
       text('▼ bạn',s.px,s.py-72,10,C.amber,'center',800);
+      if(s.urg.length)text('⏱ '+Math.ceil(Math.min(...s.urg))+'s',s.px,s.py-86,12,C.coral,'center',800);
       // thanh thời gian
       rect(0,58,W,6,'#0a121a');rect(0,58,W*(1-s.t/s.tl),6,s.t>s.tl-10?C.coral:C.teal);
       text((pm?'Làm việc buổi chiều':'Làm việc buổi sáng')+'  ·  Đã giao '+s.got+'  ·  Mang '+s.carry+'/3  ·  '+Math.max(0,Math.ceil(s.tl-s.t))+'s',480,76,13,C.txt,'center',800);
+      if(s.call){rr(380,88,200,22,11,'rgba(10,18,26,.88)',C.amber);text('📞 Sếp gọi: vào phòng Sếp, còn '+Math.max(0,Math.ceil(s.call.left))+'s',480,99,12,C.amber,'center',800)}
       hud();strip('Mũi tên/WASD: di chuyển  ·  nhặt tài liệu rồi mang tới phòng Sếp  ·  P: tạm dừng');
       if(s.paused){rect(0,58,W,432,'rgba(10,18,26,.75)');text('TẠM DỪNG',480,260,36,C.txt,'center',800);text('Nhấn P để tiếp tục',480,300,14,C.dim,'center')}
       if(s.done){
@@ -695,7 +856,7 @@ S.lunch=(()=>{let s,items;return{
     if(isOK(c)||c==='Space'){
       const it=items[s.sel];
       if(G.money<it.p){s.shake=.4;sfx.bad();toast('Không đủ xu!',C.coral);return}
-      G.money-=it.p;let mo=it.mo+(has('fr')&&it.p>0?4:0);
+      G.money-=it.p;G.ds.spent+=it.p;G.ds.lunchDone=true;if(it.p>0)G.ds.ate=true;let mo=it.mo+(has('fr')&&it.p>0?4:0);
       stat('energy',it.en);stat('mood',mo);addScore(it.p?20:0);
       if(it.h){G.ds.healthy=true;addXP(8)}
       s.done={it,mo};s.t=0;sfx.ok();if(it.p){fx.emo(700,200,mo>=7?'❤️':'😋',5);fx.spark(700,200,'#ffd166',14)}if(it.h)fx.spark(560,290,C.green,10);
@@ -747,6 +908,7 @@ S.nap=(()=>{let s;
     else if(m<10){mood=-1;sfx.bad()}else sfx.ok();
     if(has('br'))g+=5;
     g=Math.round(g);stat('energy',g);stat('mood',mood);
+    G.ds.napMin=m;G.ds.napDone=true;
     s.res={m,g,mood,perfect,xp};s.st='done';s.t=0;
   },
   key(c){
@@ -794,11 +956,11 @@ S.tea=(()=>{let s;return{
     if(isDn(c)){s.row=(s.row+1)%4;sfx.step()}
     const d=isR(c)?1:isL(c)?-1:0;
     if(d){const k=['tea','sugar','ice','top'][s.row],n=[TEAS.length,SUGAR.length,ICE.length,TOP.length][s.row];s[k]=(s[k]+d+n)%n;sfx.step()}
-    if(c==='Escape'){stat('mood',-3);toast('Bạn bỏ qua trà sữa',C.dim);s.res={skip:true};s.t=0}
+    if(c==='Escape'){stat('mood',-3);G.ds.teaDone=true;toast('Bạn bỏ qua trà sữa',C.dim);s.res={skip:true};s.t=0}
     if(isOK(c)){
       const price=TEAS[s.tea].p+(s.top<3?1:0);
       if(G.money<price){sfx.bad();toast('Không đủ xu! Nhấn Esc để bỏ qua',C.coral);return}
-      G.money-=price;
+      G.money-=price;G.ds.spent+=price;G.ds.teaDone=true;
       const m=[s.sugar===s.tgt.sugar,s.ice===s.tgt.ice,s.top===s.tgt.top],n=m.filter(Boolean).length;
       G.ds.tea=n;let mo=2+n*3;if(has('vn'))mo=Math.round(mo*1.5);
       stat('mood',mo);const xp=addXP(n*6);addScore(n*20+10);
@@ -843,6 +1005,7 @@ S.tea=(()=>{let s;return{
 S.out=(()=>{let s;return{
   enter(){
     G.clock=1050;
+    updateMissions();
     const lines=[];
     // kiệt sức: không nhận lương, mất chuỗi điểm danh, thêm một cảnh cáo
     const burn=G.energy<=BURN_AT||G.mood<=BURN_AT;
@@ -853,13 +1016,18 @@ S.out=(()=>{let s;return{
       const sal=Math.round(RANKS[G.rank].sal*(has('us')?1.1:1));G.money+=sal;
       lines.push(['Lương ngày','+'+sal+' xu',C.amber]);
     }
-    let done=0;
+    let done=0,mx=0;
     G.missions.forEach(id=>{
-      const m=missionObj(id),ok=m.ok(G.ds,G.rank);
-      if(ok){done++;const got=addXP(missionBase());addScore(100);lines.push(['✓ '+m.t(G.rank),'+'+got+' XP',C.green])}
-      else lines.push(['✗ '+m.t(G.rank),'—',C.dim]);
+      const m=missionObj(id),ok=mPass(m);
+      if(ok){done++;const got=addXP(missionBase());mx+=got;addScore(100);lines.push(['✓ '+m.t,'+'+got+' XP',C.green])}
+      else lines.push(['✗ '+m.t,'—',C.dim]);
     });
-    if(done===3&&G.warn>0&&G.warn<MAX_WARN){G.warn--;lines.push(['Đủ 3/3 nhiệm vụ: gỡ 1 cảnh cáo','Còn '+G.warn+'/'+MAX_WARN,C.green])}
+    if(done===3){
+      // thưởng 50% tổng XP nhiệm vụ thực nhận, cộng thẳng (không nhân hệ số XP lần nữa)
+      const b=Math.round(mx*.5);G.xp+=b;G.dayXP+=b;
+      lines.push(['Đủ 3/3 nhiệm vụ: thưởng thêm','+'+b+' XP',C.green]);
+      if(G.warn>0&&G.warn<MAX_WARN){G.warn--;lines.push(['Gỡ 1 cảnh cáo kiệt sức','Còn '+G.warn+'/'+MAX_WARN,C.green])}
+    }
     lines.push(['Chuỗi điểm danh',G.streak+' ngày',C.txt]);
     const old=G.rank;
     while(G.rank<RANKS.length-1&&G.xp>=RANKS[G.rank+1].xp)G.rank++;
@@ -894,10 +1062,10 @@ S.out=(()=>{let s;return{
     hud();strip('Enter: sang ngày mới (tự động lưu)');
     rr(560,76,380,400,12,'rgba(19,33,45,.96)',C.line);
     text('Tan làm lúc 17:30',750,106,20,C.txt,'center',800);
-    s.lines.forEach((l,i)=>{if(s.t>i*.35){const y=140+i*30;text(l[0],580,y,13,l[2]===C.dim?C.dim:C.txt,'left',600);text(l[1],920,y,13,l[2],'right',800)}});
+    s.lines.forEach((l,i)=>{if(s.t>i*.35){const y=134+i*27;text(l[0],580,y,13,l[2]===C.dim?C.dim:C.txt,'left',600);text(l[1],920,y,13,l[2],'right',800)}});
     const k=s.lines.length*.35;
     if(s.t>k){
-      const y=140+s.lines.length*30+8;
+      const y=134+s.lines.length*27+8;
       rect(580,y-10,340,1,C.line);
       text('Hôm nay: +'+s.xpDay+' XP  ·  +'+s.scDay+' điểm',750,y+12,14,C.teal,'center',800);
       const nx=RANKS[G.rank+1];
@@ -910,7 +1078,7 @@ S.out=(()=>{let s;return{
         rr(584,y+52,332,50,10,C.amber);
         text('THĂNG CHỨC!',750,y+68,16,C.ink,'center',800);text(RANKS[s.old].n+' → '+RANKS[G.rank].n,750,y+89,13,C.ink,'center',800);
       }
-      if(s.t>k+1.2&&blink(T))text('Nhấn Enter',750,462,14,C.amber,'center',800);
+      if(s.t>k+1.2&&blink(T))text('Nhấn Enter',750,468,13,C.amber,'center',800);
     }
   }
 }})();
@@ -959,6 +1127,7 @@ function loop(ts){
   ctx.clearRect(0,0,W,H);
   shake=Math.max(0,shake-dt*30);
   ctx.save();if(shake>0)ctx.translate(rand(-shake,shake),rand(-shake,shake));
+  if(G&&G.ds&&G.ds.done&&!['title','setup','rank'].includes(sceneName))updateMissions();
   if(scene){scene.update&&scene.update(dt);scene.draw()}
   drawFx(dt);
   ctx.restore();
